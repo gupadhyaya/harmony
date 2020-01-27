@@ -16,9 +16,9 @@ const (
 	testnetVdfDifficulty = 10000 // This takes about 20s to finish the vdf
 
 	// TestNetHTTPPattern is the http pattern for testnet.
-	TestNetHTTPPattern = "https://api.s%d.b.hmny.io"
+	TestNetHTTPPattern = "https://api.s%d.b2.hmny.io"
 	// TestNetWSPattern is the websocket pattern for testnet.
-	TestNetWSPattern = "wss://ws.s%d.b.hmny.io"
+	TestNetWSPattern = "wss://ws.s%d.b2.hmny.io"
 )
 
 func (testnetSchedule) InstanceForEpoch(epoch *big.Int) Instance {
@@ -68,4 +68,4 @@ func (ts testnetSchedule) GetShardingStructure(numShard, shardID int) []map[stri
 
 var testnetReshardingEpoch = []*big.Int{big.NewInt(0)}
 
-var testnetV0 = MustNewInstance(3, 10, 10, genesis.TNHarmonyAccounts, genesis.TNFoundationalAccounts, testnetReshardingEpoch)
+var testnetV0 = MustNewInstance(2, 10, 10, genesis.TNHarmonyAccounts, genesis.TNFoundationalAccounts, testnetReshardingEpoch)
