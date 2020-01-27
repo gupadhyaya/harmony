@@ -1,9 +1,9 @@
 package main
 
 import (
-	"encoding/hex"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"math/big"
 	"math/rand"
 	"os"
@@ -114,8 +114,10 @@ var (
 	enableMemProfiling = flag.Bool("enableMemProfiling", false, "Enable memsize logging.")
 	enableGC           = flag.Bool("enableGC", true, "Enable calling garbage collector manually .")
 	blsKeyFile         = flag.String("blskey_file", "", "The encrypted file of bls serialized private key by passphrase.")
-	blsPass            = flag.String("blspass", "", "The file containing passphrase to decrypt the encrypted bls file.")
-	blsPassphrase      string
+	blsFolder          = flag.String("blsfolder", "", "The encrypted file of bls serialized private key by passphrase.")
+
+	blsPass       = flag.String("blspass", "", "The file containing passphrase to decrypt the encrypted bls file.")
+	blsPassphrase string
 
 	// Sharding configuration parameters for devnet
 	devnetNumShards   = flag.Uint("dn_num_shards", 2, "number of shards for -network_type=devnet (default: 2)")
@@ -198,7 +200,7 @@ func passphraseForBls() {
 		return
 	}
 
-	if *blsKeyFile == "" || *blsPass == "" {
+	if *blsKeyFile == "" && *blsPass == "" {
 		fmt.Println("Internal nodes need to have pass to decrypt blskey")
 		os.Exit(101)
 	}
@@ -237,21 +239,52 @@ func setupInitialAccount() (isLeader bool) {
 	return isLeader
 }
 
-func setupConsensusKey(nodeConfig *nodeconfig.ConfigType) *bls.PublicKey {
-	consensusPriKey, err := blsgen.LoadBlsKeyWithPassPhrase(*blsKeyFile, blsPassphrase)
+func readMultiBlsKeys(consensusMultiBlsPriKey *nodeconfig.MultiBlsPrivateKey, consensusMultiBlsPubKey *nodeconfig.MultiBlsPublicKey) error {
+	multiBlsKeyDir := blsFolder //".hmy/multikeys"
+	blsKeyFiles, err := ioutil.ReadDir(*multiBlsKeyDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR when loading bls key, err :%v\n", err)
-		os.Exit(100)
+		return err
 	}
-	pubKey := consensusPriKey.GetPublicKey()
+
+	for _, blsKeyFile := range blsKeyFiles {
+		blsKeyFilePath := path.Join(*multiBlsKeyDir, blsKeyFile.Name())
+		blsKeyPassphrase := "" //utils.AskForPassphrase("Enter passphrase for the BLS key file: " + blsKeyFile.Name())
+		consensusPriKey, err := blsgen.LoadBlsKeyWithPassPhrase(blsKeyFilePath, blsKeyPassphrase)
+		if err != nil {
+			return err
+		}
+		nodeconfig.AppendPriKey(consensusMultiBlsPriKey, consensusPriKey)
+		nodeconfig.AppendPubKey(consensusMultiBlsPubKey, consensusPriKey.GetPublicKey())
+	}
+
+	return nil
+}
+
+func setupConsensusKey(nodeConfig *nodeconfig.ConfigType) *bls.PublicKey {
+	var consensusMultiPriKey nodeconfig.MultiBlsPrivateKey
+	var consensusMultiPubKey nodeconfig.MultiBlsPublicKey
+
+	if *blsKeyFile != "" {
+		consensusPriKey, err := blsgen.LoadBlsKeyWithPassPhrase(*blsKeyFile, blsPassphrase)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "ERROR when loading bls key, err :%v\n", err)
+			os.Exit(100)
+		}
+		nodeconfig.AppendPriKey(&consensusMultiPriKey, consensusPriKey)
+		nodeconfig.AppendPubKey(&consensusMultiPubKey, consensusPriKey.GetPublicKey())
+	} else {
+		err := readMultiBlsKeys(&consensusMultiPriKey, &consensusMultiPubKey)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "ERROR when loading bls keys, err :%v\n", err)
+			os.Exit(100)
+		}
+	}
 
 	// Consensus keys are the BLS12-381 keys used to sign consensus messages
-	nodeConfig.ConsensusPriKey, nodeConfig.ConsensusPubKey = consensusPriKey, consensusPriKey.GetPublicKey()
-	if nodeConfig.ConsensusPriKey == nil || nodeConfig.ConsensusPubKey == nil {
-		fmt.Println("error to get consensus keys.")
-		os.Exit(100)
-	}
-	return pubKey
+	nodeConfig.ConsensusPriKey = &consensusMultiPriKey
+	nodeConfig.ConsensusPubKey = &consensusMultiPubKey
+
+	return consensusMultiPubKey.PublicKey[0]
 }
 
 func createGlobalConfig() *nodeconfig.ConfigType {
@@ -262,7 +295,9 @@ func createGlobalConfig() *nodeconfig.ConfigType {
 		// Set up consensus keys.
 		setupConsensusKey(nodeConfig)
 	} else {
-		nodeConfig.ConsensusPriKey = &bls.SecretKey{} // set dummy bls key for consensus object
+		// set dummy bls key for consensus object
+		nodeConfig.ConsensusPriKey = nodeconfig.GetMultiBlsPrivateKey(&bls.SecretKey{})
+		nodeConfig.ConsensusPubKey = nodeconfig.GetMultiBlsPublicKey(&bls.PublicKey{})
 	}
 
 	// Set network type
@@ -284,7 +319,7 @@ func createGlobalConfig() *nodeconfig.ConfigType {
 		panic(err)
 	}
 
-	selfPeer := p2p.Peer{IP: *ip, Port: *port, ConsensusPubKey: nodeConfig.ConsensusPubKey}
+	selfPeer := p2p.Peer{IP: *ip, Port: *port, ConsensusPubKey: nodeConfig.ConsensusPubKey.PublicKey[0]}
 
 	myHost, err = p2pimpl.NewHost(&selfPeer, nodeConfig.P2pPriKey)
 	if *logConn && nodeConfig.GetNetworkType() != nodeconfig.Mainnet {
@@ -522,7 +557,7 @@ func main() {
 	}
 
 	utils.Logger().Info().
-		Str("BlsPubKey", hex.EncodeToString(nodeConfig.ConsensusPubKey.Serialize())).
+		Str("BlsPubKey", nodeConfig.ConsensusPubKey.SerializeToHexStr()).
 		Uint32("ShardID", nodeConfig.ShardID).
 		Str("ShardGroupID", nodeConfig.GetShardGroupID().String()).
 		Str("BeaconGroupID", nodeConfig.GetBeaconGroupID().String()).
