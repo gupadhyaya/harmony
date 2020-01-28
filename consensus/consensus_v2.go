@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"time"
@@ -23,6 +24,8 @@ import (
 	"github.com/harmony-one/harmony/internal/utils"
 	"github.com/harmony-one/harmony/p2p/host"
 	"github.com/harmony-one/vdf/src/vdf_go"
+	"github.com/libp2p/go-libp2p-kad-dht/metrics"
+	"go.opencensus.io/tag"
 )
 
 // handleMessageUpdate will update the consensus state according to received message
@@ -159,6 +162,11 @@ func (consensus *Consensus) announce(block *types.Block) {
 }
 
 func (consensus *Consensus) onAnnounce(msg *msg_pb.Message) {
+	ctx := context.Background()
+	ctx, _ := tag.New(
+		ctx,
+		tag.Upsert(metrics.KeyMessageType, req.GetType().String()),
+	)
 	utils.Logger().Debug().Msg("[OnAnnounce] Receive announce message")
 	if consensus.IsLeader() && consensus.current.Mode() == Normal {
 		return

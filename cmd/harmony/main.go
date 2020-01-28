@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"net/http"
 	"os"
 	"path"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/harmony-one/bls/ffi/go/bls"
 
+	"contrib.go.opencensus.io/exporter/prometheus"
 	"github.com/harmony-one/harmony/api/service/syncing"
 	"github.com/harmony-one/harmony/consensus"
 	"github.com/harmony-one/harmony/consensus/quorum"
@@ -34,6 +36,8 @@ import (
 	"github.com/harmony-one/harmony/node"
 	"github.com/harmony-one/harmony/p2p"
 	"github.com/harmony-one/harmony/p2p/p2pimpl"
+	"github.com/libp2p/go-libp2p-kad-dht/metrics"
+	"go.opencensus.io/stats/view"
 
 	golog "github.com/ipfs/go-log"
 	gologging "github.com/whyrusleeping/go-logging"
@@ -421,12 +425,32 @@ func setupConsensusAndNode(nodeConfig *nodeconfig.ConfigType) *node.Node {
 	return currentNode
 }
 
+func setupNetworkMetrics() {
+	if err := view.Register(metrics.DefaultViews...); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to register the views: %v\n", err)
+		os.Exit(1)
+	}
+	pe, err := prometheus.NewExporter(prometheus.Options{
+		Namespace: "harmony:node",
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create the Prometheus stats exporter: %v", err)
+	}
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", pe)
+		if err := http.ListenAndServe(":8888", mux); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to run Prometheus scrape endpoint: %v", err)
+		}
+	}()
+}
+
 func main() {
 	// HACK Force usage of go implementation rather than the C based one. Do the right way, see the
 	// notes one line 66,67 of https://golang.org/src/net/net.go that say can make the decision at
 	// build time.
 	os.Setenv("GODEBUG", "netdns=go")
-
+	setupNetworkMetrics()
 	flag.Var(&utils.BootNodes, "bootnodes", "a list of bootnode multiaddress (delimited by ,)")
 	flag.Parse()
 
