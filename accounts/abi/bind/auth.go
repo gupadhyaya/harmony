@@ -21,6 +21,7 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -46,9 +47,10 @@ func NewTransactor(keyin io.Reader, passphrase string) (*TransactOpts, error) {
 // from a single private key.
 func NewKeyedTransactor(key *ecdsa.PrivateKey) *TransactOpts {
 	keyAddr := crypto.PubkeyToAddress(key.PublicKey)
+	signer := types.HomesteadSigner{}
 	return &TransactOpts{
 		From: keyAddr,
-		Signer: func(signer types.Signer, address common.Address, tx *types.Transaction) (*types.Transaction, error) {
+		Signer: func(address common.Address, tx *types.Transaction) (*types.Transaction, error) {
 			if address != keyAddr {
 				return nil, errors.New("not authorized to sign this account")
 			}
@@ -59,4 +61,26 @@ func NewKeyedTransactor(key *ecdsa.PrivateKey) *TransactOpts {
 			return tx.WithSignature(signer, signature)
 		},
 	}
+}
+
+// NewKeyedTransactorWithChainID ..
+func NewKeyedTransactorWithChainID(key *ecdsa.PrivateKey, chainID *big.Int) (*TransactOpts, error) {
+	keyAddr := crypto.PubkeyToAddress(key.PublicKey)
+	if chainID == nil {
+		return nil, errors.New("no chain id specified")
+	}
+	signer := types.NewEIP155Signer(chainID)
+	return &TransactOpts{
+		From: keyAddr,
+		Signer: func(address common.Address, tx *types.Transaction) (*types.Transaction, error) {
+			if address != keyAddr {
+				return nil, errors.New("not authorized to sign this account")
+			}
+			signature, err := crypto.Sign(signer.Hash(tx).Bytes(), key)
+			if err != nil {
+				return nil, err
+			}
+			return tx.WithSignature(signer, signature)
+		},
+	}, nil
 }
